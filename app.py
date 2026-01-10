@@ -1,149 +1,214 @@
 import streamlit as st
 import json
 import os
-import base64
-from datetime import datetime
-from io import BytesIO
-from PIL import Image
+import hashlib
+from datetime import datetime, date
 
-DATA_FILE = "capsules.json"
+# ---------------- CONFIG ----------------
+USERS_FILE = "users.json"
+CAPSULES_FILE = "capsules.json"
+UPLOAD_DIR = "uploads"
 
-# ----------------- helpers -----------------
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-def load_capsules():
-    if not os.path.exists(DATA_FILE):
-        return []
-    with open(DATA_FILE, "r") as f:
+# ---------------- HELPERS ----------------
+def hash_text(text):
+    return hashlib.sha256(text.encode()).hexdigest()
+
+def load_json(path, default):
+    if not os.path.exists(path):
+        return default
+    with open(path, "r") as f:
         return json.load(f)
 
-def save_capsules(data):
-    with open(DATA_FILE, "w") as f:
+def save_json(path, data):
+    with open(path, "w") as f:
         json.dump(data, f, indent=4)
 
 def today():
-    return datetime.now().date()
+    return date.today()
 
-def image_to_base64(uploaded_file):
-    if uploaded_file is None:
-        return ""
-    return base64.b64encode(uploaded_file.read()).decode("utf-8")
-
-def base64_to_image(base64_str):
-    if not base64_str:
-        return None
-    img_bytes = base64.b64decode(base64_str)
-    return Image.open(BytesIO(img_bytes))
-
-# ----------------- session -----------------
-
+# ---------------- SESSION ----------------
 if "user" not in st.session_state:
     st.session_state.user = None
 
-# ----------------- login -----------------
+# ---------------- LOAD DATA ----------------
+users = load_json(USERS_FILE, {})
+capsules = load_json(CAPSULES_FILE, [])
 
+# ---------------- TITLE ----------------
 st.title("⏳ Time Capsule")
 
+# ======================================================
+# LOGIN / SIGNUP
+# ======================================================
 if st.session_state.user is None:
-    username = st.text_input("Enter your username")
-    if st.button("Login") and username.strip():
-        st.session_state.user = username.strip()
-        st.rerun()
+    st.subheader("Login or Create Account")
+
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Continue"):
+        if not username or not password:
+            st.error("Username and password required")
+            st.stop()
+
+        pw_hash = hash_text(password)
+
+        if username in users:
+            if users[username] == pw_hash:
+                st.session_state.user = username
+                st.success("Login successful")
+                st.rerun()
+            else:
+                st.error("Incorrect password")
+        else:
+            users[username] = pw_hash
+            save_json(USERS_FILE, users)
+            st.session_state.user = username
+            st.success("Account created")
+            st.rerun()
+
     st.stop()
 
-st.success(f"Welcome, {st.session_state.user}")
+# ======================================================
+# DASHBOARD
+# ======================================================
+user = st.session_state.user
+st.success(f"Welcome, {user}")
 
-capsules = load_capsules()
-
-choice = st.radio(
+menu = st.radio(
     "Choose an option",
     ["Create Capsule", "View Capsules Received", "View Capsules You Created"]
 )
 
-# ----------------- create capsule -----------------
+# ======================================================
+# CREATE CAPSULE
+# ======================================================
+if menu == "Create Capsule":
+    st.header("📦 Create a Time Capsule")
 
-if choice == "Create Capsule":
-    st.header("📦 Create Capsule")
-
-    receiver = st.text_input("Receiver username")
-    unlock_date = st.date_input("Unlock date")
-    password = st.text_input("Capsule password", type="password")
+    receiver = st.text_input("Send to (username)")
+    unlock_date = st.date_input("Unlock date", min_value=today())
+    capsule_pw = st.text_input("Capsule password", type="password")
     message = st.text_area("Message")
-
-    uploaded_image = st.file_uploader(
-        "Optional image", type=["png", "jpg", "jpeg"]
-    )
+    image = st.file_uploader("Optional image", ["jpg", "jpeg", "png"])
 
     if st.button("Create Capsule"):
-        image_base64 = image_to_base64(uploaded_image)
+        if not receiver or not capsule_pw or not message:
+            st.error("All fields except image are required")
+            st.stop()
+
+        image_path = ""
+        if image:
+            filename = f"{datetime.now().timestamp()}_{image.name}"
+            image_path = os.path.join(UPLOAD_DIR, filename)
+            with open(image_path, "wb") as f:
+                f.write(image.read())
 
         capsules.append({
-            "sender": st.session_state.user,
+            "id": datetime.now().timestamp(),
+            "sender": user,
             "receiver": receiver,
             "unlock_date": str(unlock_date),
-            "password": password,
+            "capsule_pw_hash": hash_text(capsule_pw),
             "message": message,
-            "image_base64": image_base64
+            "image_path": image_path
         })
 
-        save_capsules(capsules)
-        st.success("Capsule created successfully!")
+        save_json(CAPSULES_FILE, capsules)
+        st.success("Capsule created successfully")
 
-# ----------------- view received -----------------
-
-elif choice == "View Capsules Received":
-    st.header("📥 Capsules Sent To You")
+# ======================================================
+# VIEW RECEIVED CAPSULES
+# ======================================================
+elif menu == "View Capsules Received":
+    st.header("📬 Capsules Sent To You")
 
     found = False
 
-    for i, cap in enumerate(capsules, 1):
-        if cap["receiver"] != st.session_state.user:
+    for idx, cap in enumerate(capsules):
+        if cap["receiver"] != user:
             continue
 
         found = True
-        st.subheader(f"Capsule #{i} from {cap['sender']}")
+        st.subheader(f"Capsule from {cap['sender']}")
 
-        if today() < datetime.fromisoformat(cap["unlock_date"]).date():
-            st.warning(f"Unlocks on {cap['unlock_date']}")
+        unlock = datetime.fromisoformat(cap["unlock_date"]).date()
+        if today() < unlock:
+            st.info(f"🔒 Locked until {unlock}")
             continue
 
-        pwd = st.text_input(
+        pw = st.text_input(
             "Capsule password",
             type="password",
-            key=f"recv_{i}"
+            key=f"recv_{idx}"
         )
 
-        if pwd == cap["password"]:
+        if pw and hash_text(pw) == cap["capsule_pw_hash"]:
             st.success("Unlocked")
             st.write(cap["message"])
 
-            img = base64_to_image(cap.get("image_base64", ""))
-            if img:
-                st.image(img, use_container_width=True)
-        else:
-            st.info("Enter password to unlock")
+            if cap["image_path"] and os.path.exists(cap["image_path"]):
+                st.image(cap["image_path"])
 
     if not found:
-        st.info("No capsules received yet")
+        st.info("No capsules received")
 
-# ----------------- view created -----------------
-
-elif choice == "View Capsules You Created":
-    st.header("📤 Capsules You Created")
+# ======================================================
+# VIEW / EDIT / DELETE CREATED CAPSULES
+# ======================================================
+elif menu == "View Capsules You Created":
+    st.header("📝 Capsules You Created")
 
     found = False
 
-    for i, cap in enumerate(capsules, 1):
-        if cap["sender"] != st.session_state.user:
+    for idx, cap in enumerate(capsules):
+        if cap["sender"] != user:
             continue
 
         found = True
-        st.subheader(f"Capsule #{i} → {cap['receiver']}")
-        st.write(f"Unlock date: {cap['unlock_date']}")
+        unlock = datetime.fromisoformat(cap["unlock_date"]).date()
+
+        st.subheader(f"To {cap['receiver']}")
+        st.write(f"Unlock date: {unlock}")
+
+        # -------- EDIT (only before unlock) --------
+        if today() < unlock:
+            with st.expander("✏️ Edit Capsule"):
+                new_message = st.text_area(
+                    "Edit message",
+                    value=cap["message"],
+                    key=f"edit_{idx}"
+                )
+
+                if st.button("Save Changes", key=f"save_{idx}"):
+                    cap["message"] = new_message
+                    save_json(CAPSULES_FILE, capsules)
+                    st.success("Capsule updated")
+                    st.rerun()
+        else:
+            st.info("Capsule already unlocked — editing disabled")
+
         st.write(cap["message"])
 
-        img = base64_to_image(cap.get("image_base64", ""))
-        if img:
-            st.image(img, use_container_width=True)
+        if cap["image_path"] and os.path.exists(cap["image_path"]):
+            st.image(cap["image_path"])
+
+        # -------- DELETE --------
+        if st.button("🗑️ Delete Capsule", key=f"del_{idx}"):
+            capsules.pop(idx)
+            save_json(CAPSULES_FILE, capsules)
+            st.success("Capsule deleted")
+            st.rerun()
 
     if not found:
-        st.info("You haven't created any capsules yet")
+        st.info("You haven't created any capsules")
+
+# ======================================================
+# LOGOUT
+# ======================================================
+st.divider()
+if st.button("Logout"):
+    st.session_state.user = None
+    st.rerun()
