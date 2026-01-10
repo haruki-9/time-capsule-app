@@ -31,18 +31,13 @@ def load_capsules():
     if not os.path.exists(CAPSULE_FILE):
         return pd.DataFrame(columns=[
             "id", "creator", "recipient",
-            "message", "image", "unlock_date",
-            "capsule_pw_hash"
+            "message", "image",
+            "unlock_date", "capsule_pw_hash"
         ])
     return pd.read_csv(CAPSULE_FILE)
 
 def save_capsules(df):
     df.to_csv(CAPSULE_FILE, index=False)
-
-def next_capsule_id(df):
-    if df.empty:
-        return 1
-    return int(df["id"].max()) + 1
 
 # ---------------- SESSION ----------------
 if "user" not in st.session_state:
@@ -51,17 +46,16 @@ if "user" not in st.session_state:
 # ---------------- TITLE ----------------
 st.title("⏳ Time Capsule")
 
+users_df = load_users()
+
 # ======================================================
-# LOGIN / SIGNUP
+# LOGIN / SIGN UP
 # ======================================================
 if st.session_state.user is None:
     st.subheader("Login or Create Account")
 
-    users_df = load_users()
-
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
-
     st.caption("Password must contain only letters and numbers")
 
     if st.button("Continue"):
@@ -75,17 +69,16 @@ if st.session_state.user is None:
 
         existing = users_df[users_df["username"] == username]
 
-        # ---------- LOGIN ----------
+        # LOGIN
         if not existing.empty:
-            stored_hash = existing.iloc[0]["password_hash"]
-            if hash_text(password) == stored_hash:
+            if hash_text(password) == existing.iloc[0]["password_hash"]:
                 st.session_state.user = username
                 st.success("Login successful")
                 st.rerun()
             else:
                 st.error("Incorrect password")
 
-        # ---------- SIGN UP ----------
+        # SIGN UP
         else:
             users_df = pd.concat([
                 users_df,
@@ -108,7 +101,6 @@ if st.session_state.user is None:
 user = st.session_state.user
 st.success(f"Welcome, {user}")
 
-users_df = load_users()
 capsules_df = load_capsules()
 today = date.today()
 
@@ -117,7 +109,9 @@ menu = st.radio(
     ["Create Capsule", "View Capsules Received", "View Capsules You Created"]
 )
 
-# ---------------- CREATE CAPSULE ----------------
+# ======================================================
+# CREATE CAPSULE
+# ======================================================
 if menu == "Create Capsule":
     st.header("📦 Create a Time Capsule")
 
@@ -127,24 +121,15 @@ if menu == "Create Capsule":
         capsule_pw = st.text_input("Capsule password", type="password")
         message = st.text_area("Message")
         image = st.file_uploader("Optional image", ["jpg", "png", "jpeg"])
-
-        submit = st.form_submit_button("Create")
+        submit = st.form_submit_button("Create Capsule")
 
         if submit:
-            if not recipient or not message or not capsule_pw:
+            if not recipient or not capsule_pw or not message:
                 st.error("All fields except image are required")
-
-            elif recipient == user:
-                st.error("You cannot send a capsule to yourself")
-
-            elif recipient not in users_df["username"].values:
-                st.error("Recipient username does not exist")
-
             elif not valid_password(capsule_pw):
                 st.error("Capsule password must be letters and numbers only")
-
             else:
-                cid = next_capsule_id(capsules_df)
+                cid = len(capsules_df) + 1
                 img_path = ""
 
                 if image:
@@ -166,9 +151,11 @@ if menu == "Create Capsule":
                 ], ignore_index=True)
 
                 save_capsules(capsules_df)
-                st.success("Capsule created successfully")
+                st.success("🎉 Capsule created successfully")
 
-# ---------------- VIEW RECEIVED ----------------
+# ======================================================
+# VIEW RECEIVED CAPSULES
+# ======================================================
 elif menu == "View Capsules Received":
     st.header("📬 Capsules Sent To You")
 
@@ -186,21 +173,28 @@ elif menu == "View Capsules Received":
             continue
 
         pw = st.text_input(
-            "Capsule password",
+            "Enter capsule password",
             type="password",
-            key=f"cap_{row['id']}"
+            key=f"recv_{row['id']}"
         )
 
         if pw and hash_text(pw) == row["capsule_pw_hash"]:
-            st.success("Unlocked")
+            st.success("Unlocked 🎉")
             st.write(row["message"])
-            if row["image"]:
+
+            if (
+                isinstance(row["image"], str)
+                and row["image"] != ""
+                and os.path.exists(row["image"])
+            ):
                 st.image(row["image"])
 
     if not found:
-        st.info("No capsules yet")
+        st.info("No capsules received yet")
 
-# ---------------- VIEW CREATED ----------------
+# ======================================================
+# VIEW CREATED CAPSULES
+# ======================================================
 elif menu == "View Capsules You Created":
     st.header("📝 Capsules You Created")
 
@@ -213,13 +207,20 @@ elif menu == "View Capsules You Created":
         st.subheader(f"Capsule #{row['id']} → {row['recipient']}")
         st.write(f"Unlock date: {row['unlock_date']}")
         st.write(row["message"])
-        if row["image"]:
+
+        if (
+            isinstance(row["image"], str)
+            and row["image"] != ""
+            and os.path.exists(row["image"])
+        ):
             st.image(row["image"])
 
     if not found:
-        st.info("You haven't created any capsules")
+        st.info("You haven't created any capsules yet")
 
-# ---------------- LOGOUT ----------------
+# ======================================================
+# LOGOUT
+# ======================================================
 st.divider()
 if st.button("Logout"):
     st.session_state.user = None
