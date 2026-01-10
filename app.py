@@ -38,10 +38,10 @@ CREATE TABLE IF NOT EXISTS capsules (
 conn.commit()
 
 # ---------------- HELPERS ----------------
-def hash_text(t): 
+def hash_text(t):
     return hashlib.sha256(t.encode()).hexdigest()
 
-def today(): 
+def today():
     return date.today()
 
 # ---------------- SESSION ----------------
@@ -100,7 +100,7 @@ if menu == "Create Capsule":
     unlock = st.date_input("Unlock date", min_value=today())
     cap_pw = st.text_input("Capsule password", type="password")
     msg = st.text_area("Message")
-    img = st.file_uploader("Optional image", ["png","jpg","jpeg"])
+    img = st.file_uploader("Optional image", ["png", "jpg", "jpeg"])
 
     if st.button("Create Capsule"):
         img_path = ""
@@ -123,7 +123,7 @@ elif menu == "View Capsules Received":
     rows = c.fetchall()
 
     if not rows:
-        st.info("No capsules")
+        st.info("No capsules received")
     else:
         for r in rows:
             cid, sender, _, unlock, pw_hash, msg, img, *_ = r
@@ -148,7 +148,7 @@ elif menu == "View Capsules You Created":
     rows = c.fetchall()
 
     if not rows:
-        st.info("None")
+        st.info("You haven't created any capsules")
     else:
         for r in rows:
             cid, _, recv, unlock, _, msg, img, edits, override, req = r
@@ -156,35 +156,38 @@ elif menu == "View Capsules You Created":
 
             st.subheader(f"To {recv} (#{cid})")
             st.write(f"Edits used: {edits}/3")
+            st.write(f"Unlock date: {unlock_d}")
 
             can_edit = today() < unlock_d and (edits < 3 or override)
 
             if can_edit:
                 with st.expander("✏️ Edit Capsule"):
-                    new_msg = st.text_area("Message", msg, key=f"m{cid}")
-                    if st.button("Save", key=f"s{cid}"):
+                    new_msg = st.text_area("Message", msg, key=f"edit_{cid}")
+
+                    if st.button("Save Edit", key=f"save_{cid}"):
                         c.execute("""
                         UPDATE capsules
                         SET message=?, edit_count=edit_count+1
                         WHERE id=?
                         """, (new_msg, cid))
                         conn.commit()
-                        st.success("Updated")
+                        st.success("Capsule updated")
                         st.rerun()
             else:
-                st.warning("Edit limit reached")
+                st.warning("Editing locked")
 
                 if today() < unlock_d and not req:
-                    if st.button("Request admin permission", key=f"r{cid}"):
+                    if st.button("Request admin permission", key=f"req_{cid}"):
                         c.execute(
                             "UPDATE capsules SET edit_request=1 WHERE id=?",
                             (cid,)
                         )
                         conn.commit()
                         st.success("Request sent to admin")
+                        st.rerun()
 
                 elif req:
-                    st.info("Permission request pending")
+                    st.info("Admin approval pending")
 
 # ---------------- ADMIN PANEL ----------------
 elif menu == "Admin Panel":
@@ -201,7 +204,8 @@ elif menu == "Admin Panel":
     else:
         for cid, sender, edits in rows:
             st.write(f"Capsule #{cid} by {sender} (edits used: {edits})")
-            if st.button(f"Approve edits for #{cid}", key=f"a{cid}"):
+
+            if st.button(f"Approve edits for #{cid}", key=f"approve_{cid}"):
                 c.execute("""
                 UPDATE capsules
                 SET admin_override=1, edit_request=0
@@ -209,6 +213,7 @@ elif menu == "Admin Panel":
                 """, (cid,))
                 conn.commit()
                 st.success("Edit permission granted")
+                st.rerun()
 
 # ---------------- LOGOUT ----------------
 st.divider()
