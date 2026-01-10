@@ -4,12 +4,12 @@ import hashlib
 import os
 from datetime import datetime, date
 
-# ----------------- CONFIG -----------------
-DB_FILE = "capsules.db"
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# ---------------- CONFIG ----------------
+DB_FILE = "time_capsule.db"
+IMAGE_DIR = "uploads"
+os.makedirs(IMAGE_DIR, exist_ok=True)
 
-# ----------------- DB SETUP -----------------
+# ---------------- DB ----------------
 conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 c = conn.cursor()
 
@@ -31,146 +31,160 @@ CREATE TABLE IF NOT EXISTS capsules (
     image_path TEXT
 )
 """)
-
 conn.commit()
 
-# ----------------- HELPERS -----------------
+# ---------------- HELPERS ----------------
 def hash_text(text):
     return hashlib.sha256(text.encode()).hexdigest()
 
 def today():
     return date.today()
 
-# ----------------- SESSION -----------------
+# ---------------- SESSION ----------------
 if "user" not in st.session_state:
     st.session_state.user = None
 
+# ---------------- LOGIN ----------------
 st.title("⏳ Time Capsule")
 
-# ----------------- AUTH -----------------
 if st.session_state.user is None:
-    tab1, tab2 = st.tabs(["Login", "Register"])
+    st.subheader("Login / Sign Up")
 
-    with tab1:
-        u = st.text_input("Username", key="login_u")
-        p = st.text_input("Password", type="password", key="login_p")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
 
-        if st.button("Login"):
-            c.execute("SELECT password_hash FROM users WHERE username=?", (u,))
-            row = c.fetchone()
-            if row and hash_text(p) == row[0]:
+    if st.button("Continue"):
+        if not u or not p:
+            st.error("All fields required")
+            st.stop()
+
+        c.execute("SELECT password_hash FROM users WHERE username=?", (u,))
+        row = c.fetchone()
+
+        if row:
+            if hash_text(p) == row[0]:
                 st.session_state.user = u
                 st.rerun()
             else:
-                st.error("Invalid username or password")
-
-    with tab2:
-        u = st.text_input("New username", key="reg_u")
-        p = st.text_input("New password", type="password", key="reg_p")
-
-        if st.button("Register"):
-            try:
-                c.execute(
-                    "INSERT INTO users VALUES (?,?)",
-                    (u, hash_text(p))
-                )
-                conn.commit()
-                st.success("Account created. Login now.")
-            except:
-                st.error("Username already exists")
+                st.error("Wrong password")
+        else:
+            c.execute(
+                "INSERT INTO users VALUES (?,?)",
+                (u, hash_text(p))
+            )
+            conn.commit()
+            st.session_state.user = u
+            st.success("Account created")
+            st.rerun()
 
     st.stop()
 
-# ----------------- MAIN -----------------
-st.success(f"Welcome, {st.session_state.user}")
+# ---------------- DASHBOARD ----------------
+user = st.session_state.user
+st.success(f"Logged in as {user}")
 
-choice = st.radio(
-    "Choose an option",
+menu = st.radio(
+    "Choose",
     ["Create Capsule", "View Capsules Received", "View Capsules You Created"]
 )
 
-# ----------------- CREATE CAPSULE -----------------
-if choice == "Create Capsule":
+# ---------------- CREATE ----------------
+if menu == "Create Capsule":
     st.header("📦 Create Capsule")
 
     receiver = st.text_input("Receiver username")
-    unlock_date = st.date_input("Unlock date")
-    capsule_pw = st.text_input("Capsule password", type="password")
-    message = st.text_area("Message")
-    image = st.file_uploader("Optional image", ["png", "jpg", "jpeg"])
+    unlock = st.date_input("Unlock date", min_value=today())
+    cap_pw = st.text_input("Capsule password", type="password")
+    msg = st.text_area("Message")
+    img = st.file_uploader("Optional image", ["png", "jpg", "jpeg"])
 
     if st.button("Create Capsule"):
         img_path = ""
-
-        if image:
-            img_path = f"{UPLOAD_DIR}/{datetime.now().timestamp()}_{image.name}"
+        if img:
+            img_path = f"{IMAGE_DIR}/{datetime.now().timestamp()}_{img.name}"
             with open(img_path, "wb") as f:
-                f.write(image.read())
+                f.write(img.read())
 
         c.execute("""
         INSERT INTO capsules
         (sender, receiver, unlock_date, capsule_pw_hash, message, image_path)
         VALUES (?,?,?,?,?,?)
         """, (
-            st.session_state.user,
+            user,
             receiver,
-            str(unlock_date),
-            hash_text(capsule_pw),
-            message,
+            unlock.isoformat(),
+            hash_text(cap_pw),
+            msg,
             img_path
         ))
         conn.commit()
+        st.success("Capsule created")
 
-        st.success("Capsule created successfully!")
+# ---------------- VIEW RECEIVED ----------------
+elif menu == "View Capsules Received":
+    st.header("📬 Capsules Sent To You")
 
-# ----------------- VIEW RECEIVED -----------------
-elif choice == "View Capsules Received":
-    st.header("📥 Capsules Sent To You")
-
-    c.execute("SELECT * FROM capsules WHERE receiver=?", (st.session_state.user,))
+    c.execute("SELECT * FROM capsules WHERE receiver=?", (user,))
     rows = c.fetchall()
 
     if not rows:
-        st.info("No capsules received yet")
+        st.info("No capsules")
+    else:
+        for r in rows:
+            cid, sender, _, unlock, pw_hash, msg, img_path = r
+            unlock_date = datetime.fromisoformat(unlock).date()
 
-    for cap in rows:
-        cap_id, sender, _, unlock, pw_hash, msg, img = cap
-        st.subheader(f"From {sender}")
+            st.subheader(f"From {sender} (Capsule #{cid})")
 
-        if today() < datetime.fromisoformat(unlock).date():
-            st.warning(f"Unlocks on {unlock}")
-            continue
+            if today() < unlock_date:
+                st.warning(f"Locked until {unlock_date}")
+                continue
 
-        pw = st.text_input(
-            "Capsule password",
-            type="password",
-            key=f"cap_{cap_id}"
-        )
+            pw = st.text_input(
+                "Capsule password",
+                type="password",
+                key=f"open_{cid}"
+            )
 
-        if pw and hash_text(pw) == pw_hash:
-            st.success("Unlocked")
+            if pw and hash_text(pw) == pw_hash:
+                st.success("Unlocked")
+                st.write(msg)
+                if img_path and os.path.exists(img_path):
+                    st.image(img_path)
+
+# ---------------- VIEW CREATED ----------------
+elif menu == "View Capsules You Created":
+    st.header("📝 Capsules You Created")
+
+    c.execute("SELECT * FROM capsules WHERE sender=?", (user,))
+    rows = c.fetchall()
+
+    if not rows:
+        st.info("None created")
+    else:
+        for r in rows:
+            cid, _, receiver, unlock, _, msg, img_path = r
+            unlock_date = datetime.fromisoformat(unlock).date()
+
+            st.subheader(f"To {receiver} (Capsule #{cid})")
+            st.write(f"Unlocks on: {unlock_date}")
             st.write(msg)
 
-            if img and os.path.exists(img):
-                st.image(img)
-        else:
-            st.info("Enter correct capsule password")
+            if img_path and os.path.exists(img_path):
+                st.image(img_path)
 
-# ----------------- VIEW CREATED -----------------
-elif choice == "View Capsules You Created":
-    st.header("📤 Capsules You Created")
+            # 🔒 DELETE LOGIC
+            if today() < unlock_date:
+                if st.button("❌ Delete Capsule", key=f"del_{cid}"):
+                    c.execute("DELETE FROM capsules WHERE id=?", (cid,))
+                    conn.commit()
+                    st.success("Capsule deleted")
+                    st.rerun()
+            else:
+                st.info("🔒 Cannot delete after unlock")
 
-    c.execute("SELECT * FROM capsules WHERE sender=?", (st.session_state.user,))
-    rows = c.fetchall()
-
-    if not rows:
-        st.info("You haven't created any capsules")
-
-    for cap in rows:
-        _, _, receiver, unlock, _, msg, img = cap
-        st.subheader(f"To {receiver}")
-        st.write(f"Unlock date: {unlock}")
-        st.write(msg)
-
-        if img and os.path.exists(img):
-            st.image(img)
+# ---------------- LOGOUT ----------------
+st.divider()
+if st.button("Logout"):
+    st.session_state.user = None
+    st.rerun()
