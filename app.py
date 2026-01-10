@@ -39,6 +39,11 @@ def load_capsules():
 def save_capsules(df):
     df.to_csv(CAPSULE_FILE, index=False)
 
+def next_capsule_id(df):
+    if df.empty:
+        return 1
+    return int(df["id"].max()) + 1
+
 # ---------------- SESSION ----------------
 if "user" not in st.session_state:
     st.session_state.user = None
@@ -46,13 +51,13 @@ if "user" not in st.session_state:
 # ---------------- TITLE ----------------
 st.title("⏳ Time Capsule")
 
-users_df = load_users()
-
 # ======================================================
-# LOGIN / SIGNUP (SMART, NO DROPDOWN)
+# LOGIN / SIGNUP
 # ======================================================
 if st.session_state.user is None:
     st.subheader("Login or Create Account")
+
+    users_df = load_users()
 
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
@@ -103,6 +108,7 @@ if st.session_state.user is None:
 user = st.session_state.user
 st.success(f"Welcome, {user}")
 
+users_df = load_users()
 capsules_df = load_capsules()
 today = date.today()
 
@@ -114,8 +120,6 @@ menu = st.radio(
 # ---------------- CREATE CAPSULE ----------------
 if menu == "Create Capsule":
     st.header("📦 Create a Time Capsule")
-
-    recipients = users_df["username"].tolist()
 
     with st.form("create_capsule"):
         recipient = st.text_input("Send to (username)")
@@ -129,10 +133,18 @@ if menu == "Create Capsule":
         if submit:
             if not recipient or not message or not capsule_pw:
                 st.error("All fields except image are required")
+
+            elif recipient == user:
+                st.error("You cannot send a capsule to yourself")
+
+            elif recipient not in users_df["username"].values:
+                st.error("Recipient username does not exist")
+
             elif not valid_password(capsule_pw):
                 st.error("Capsule password must be letters and numbers only")
+
             else:
-                cid = len(capsules_df) + 1
+                cid = next_capsule_id(capsules_df)
                 img_path = ""
 
                 if image:
@@ -154,7 +166,7 @@ if menu == "Create Capsule":
                 ], ignore_index=True)
 
                 save_capsules(capsules_df)
-                st.success("Capsule created")
+                st.success("Capsule created successfully")
 
 # ---------------- VIEW RECEIVED ----------------
 elif menu == "View Capsules Received":
