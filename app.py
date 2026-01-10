@@ -1,227 +1,139 @@
 import streamlit as st
-import pandas as pd
+import json
 import os
-import hashlib
-import re
-from datetime import date
+from datetime import datetime
 
-# ---------------- CONFIG ----------------
-USER_FILE = "users.csv"
-CAPSULE_FILE = "capsules.csv"
-IMAGE_DIR = "images"
+DATA_FILE = "capsules.json"
 
-os.makedirs(IMAGE_DIR, exist_ok=True)
-
-# ---------------- HELPERS ----------------
-def hash_text(text):
-    return hashlib.sha256(text.encode()).hexdigest()
-
-def valid_password(pw):
-    return bool(re.fullmatch(r"[A-Za-z0-9]+", pw))
-
-def load_users():
-    if not os.path.exists(USER_FILE):
-        return pd.DataFrame(columns=["username", "password_hash"])
-    return pd.read_csv(USER_FILE)
-
-def save_users(df):
-    df.to_csv(USER_FILE, index=False)
+# ----------------- helpers -----------------
 
 def load_capsules():
-    if not os.path.exists(CAPSULE_FILE):
-        return pd.DataFrame(columns=[
-            "id", "creator", "recipient",
-            "message", "image",
-            "unlock_date", "capsule_pw_hash"
-        ])
-    return pd.read_csv(CAPSULE_FILE)
+    if not os.path.exists(DATA_FILE):
+        return []
+    with open(DATA_FILE, "r") as f:
+        return json.load(f)
 
-def save_capsules(df):
-    df.to_csv(CAPSULE_FILE, index=False)
+def save_capsules(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
-# ---------------- SESSION ----------------
+def today():
+    return datetime.now().date()
+
+# ----------------- session -----------------
+
 if "user" not in st.session_state:
     st.session_state.user = None
 
-# ---------------- TITLE ----------------
+# ----------------- login -----------------
+
 st.title("⏳ Time Capsule")
 
-users_df = load_users()
-
-# ======================================================
-# LOGIN / SIGN UP
-# ======================================================
 if st.session_state.user is None:
-    st.subheader("Login or Create Account")
-
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    st.caption("Password must contain only letters and numbers")
-
-    if st.button("Continue"):
-        if not username or not password:
-            st.error("Username and password required")
-            st.stop()
-
-        if not valid_password(password):
-            st.error("Password must contain only letters and numbers")
-            st.stop()
-
-        existing = users_df[users_df["username"] == username]
-
-        # LOGIN
-        if not existing.empty:
-            if hash_text(password) == existing.iloc[0]["password_hash"]:
-                st.session_state.user = username
-                st.success("Login successful")
-                st.rerun()
-            else:
-                st.error("Incorrect password")
-
-        # SIGN UP
-        else:
-            users_df = pd.concat([
-                users_df,
-                pd.DataFrame([{
-                    "username": username,
-                    "password_hash": hash_text(password)
-                }])
-            ], ignore_index=True)
-
-            save_users(users_df)
-            st.session_state.user = username
-            st.success("Account created successfully")
-            st.rerun()
-
+    username = st.text_input("Enter your username")
+    if st.button("Login") and username.strip():
+        st.session_state.user = username.strip()
+        st.rerun()
     st.stop()
 
-# ======================================================
-# DASHBOARD
-# ======================================================
-user = st.session_state.user
-st.success(f"Welcome, {user}")
+st.success(f"Welcome, {st.session_state.user}")
 
-capsules_df = load_capsules()
-today = date.today()
+capsules = load_capsules()
 
-menu = st.radio(
+choice = st.radio(
     "Choose an option",
     ["Create Capsule", "View Capsules Received", "View Capsules You Created"]
 )
 
-# ======================================================
-# CREATE CAPSULE
-# ======================================================
-if menu == "Create Capsule":
-    st.header("📦 Create a Time Capsule")
+# ----------------- create capsule -----------------
 
-    with st.form("create_capsule"):
-        recipient = st.text_input("Send to (username)")
-        unlock_date = st.date_input("Unlock date", min_value=today)
-        capsule_pw = st.text_input("Capsule password", type="password")
-        message = st.text_area("Message")
-        image = st.file_uploader("Optional image", ["jpg", "png", "jpeg"])
-        submit = st.form_submit_button("Create Capsule")
+if choice == "Create Capsule":
+    st.header("📦 Create Capsule")
 
-        if submit:
-            if not recipient or not capsule_pw or not message:
-                st.error("All fields except image are required")
-            elif not valid_password(capsule_pw):
-                st.error("Capsule password must be letters and numbers only")
-            else:
-                cid = len(capsules_df) + 1
-                img_path = ""
+    receiver = st.text_input("Receiver username")
+    unlock_date = st.date_input("Unlock date")
+    password = st.text_input("Capsule password", type="password")
+    message = st.text_area("Message")
 
-                if image:
-                    img_path = f"{IMAGE_DIR}/{cid}_{image.name}"
-                    with open(img_path, "wb") as f:
-                        f.write(image.read())
+    uploaded_image = st.file_uploader("Optional image", type=["png", "jpg", "jpeg"])
 
-                capsules_df = pd.concat([
-                    capsules_df,
-                    pd.DataFrame([{
-                        "id": cid,
-                        "creator": user,
-                        "recipient": recipient,
-                        "message": message,
-                        "image": img_path,
-                        "unlock_date": unlock_date,
-                        "capsule_pw_hash": hash_text(capsule_pw)
-                    }])
-                ], ignore_index=True)
+    if st.button("Create Capsule"):
+        image_path = ""
 
-                save_capsules(capsules_df)
-                st.success("🎉 Capsule created successfully")
+        if uploaded_image:
+            os.makedirs("uploads", exist_ok=True)
+            image_path = f"uploads/{datetime.now().timestamp()}_{uploaded_image.name}"
+            with open(image_path, "wb") as f:
+                f.write(uploaded_image.read())
 
-# ======================================================
-# VIEW RECEIVED CAPSULES
-# ======================================================
-elif menu == "View Capsules Received":
-    st.header("📬 Capsules Sent To You")
+        capsules.append({
+            "sender": st.session_state.user,
+            "receiver": receiver,
+            "unlock_date": str(unlock_date),
+            "password": password,
+            "message": message,
+            "image_path": image_path
+        })
+
+        save_capsules(capsules)
+        st.success("Capsule created successfully!")
+
+# ----------------- view received -----------------
+
+elif choice == "View Capsules Received":
+    st.header("📥 Capsules Sent To You")
 
     found = False
-    for _, row in capsules_df.iterrows():
-        if row["recipient"] != user:
+
+    for i, cap in enumerate(capsules, 1):
+        if cap["receiver"] != st.session_state.user:
             continue
 
         found = True
-        st.subheader(f"Capsule #{row['id']} from {row['creator']}")
+        st.subheader(f"Capsule #{i} from {cap['sender']}")
 
-        unlock = pd.to_datetime(row["unlock_date"]).date()
-        if today < unlock:
-            st.info(f"🔒 Locked until {unlock}")
+        if today() < datetime.fromisoformat(cap["unlock_date"]).date():
+            st.warning(f"Unlocks on {cap['unlock_date']}")
             continue
 
-        pw = st.text_input(
-            "Enter capsule password",
+        pwd = st.text_input(
+            "Capsule password",
             type="password",
-            key=f"recv_{row['id']}"
+            key=f"recv_{i}"
         )
 
-        if pw and hash_text(pw) == row["capsule_pw_hash"]:
-            st.success("Unlocked 🎉")
-            st.write(row["message"])
+        if pwd == cap["password"]:
+            st.success("Unlocked")
+            st.write(cap["message"])
 
-            if (
-                isinstance(row["image"], str)
-                and row["image"] != ""
-                and os.path.exists(row["image"])
-            ):
-                st.image(row["image"])
+            # ✅ SAFE IMAGE DISPLAY
+            if cap.get("image_path") and os.path.exists(cap["image_path"]):
+                st.image(cap["image_path"])
+        else:
+            st.info("Enter password to unlock")
 
     if not found:
         st.info("No capsules received yet")
 
-# ======================================================
-# VIEW CREATED CAPSULES
-# ======================================================
-elif menu == "View Capsules You Created":
-    st.header("📝 Capsules You Created")
+# ----------------- view created -----------------
+
+elif choice == "View Capsules You Created":
+    st.header("📤 Capsules You Created")
 
     found = False
-    for _, row in capsules_df.iterrows():
-        if row["creator"] != user:
+
+    for i, cap in enumerate(capsules, 1):
+        if cap["sender"] != st.session_state.user:
             continue
 
         found = True
-        st.subheader(f"Capsule #{row['id']} → {row['recipient']}")
-        st.write(f"Unlock date: {row['unlock_date']}")
-        st.write(row["message"])
+        st.subheader(f"Capsule #{i} → {cap['receiver']}")
+        st.write(f"Unlock date: {cap['unlock_date']}")
+        st.write(cap["message"])
 
-        if (
-            isinstance(row["image"], str)
-            and row["image"] != ""
-            and os.path.exists(row["image"])
-        ):
-            st.image(row["image"])
+        # ✅ SAFE IMAGE DISPLAY
+        if cap.get("image_path") and os.path.exists(cap["image_path"]):
+            st.image(cap["image_path"])
 
     if not found:
         st.info("You haven't created any capsules yet")
-
-# ======================================================
-# LOGOUT
-# ======================================================
-st.divider()
-if st.button("Logout"):
-    st.session_state.user = None
-    st.rerun()
