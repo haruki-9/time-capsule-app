@@ -1,7 +1,10 @@
 import streamlit as st
 import json
 import os
+import base64
 from datetime import datetime
+from io import BytesIO
+from PIL import Image
 
 DATA_FILE = "capsules.json"
 
@@ -19,6 +22,17 @@ def save_capsules(data):
 
 def today():
     return datetime.now().date()
+
+def image_to_base64(uploaded_file):
+    if uploaded_file is None:
+        return ""
+    return base64.b64encode(uploaded_file.read()).decode("utf-8")
+
+def base64_to_image(base64_str):
+    if not base64_str:
+        return None
+    img_bytes = base64.b64decode(base64_str)
+    return Image.open(BytesIO(img_bytes))
 
 # ----------------- session -----------------
 
@@ -55,16 +69,12 @@ if choice == "Create Capsule":
     password = st.text_input("Capsule password", type="password")
     message = st.text_area("Message")
 
-    uploaded_image = st.file_uploader("Optional image", type=["png", "jpg", "jpeg"])
+    uploaded_image = st.file_uploader(
+        "Optional image", type=["png", "jpg", "jpeg"]
+    )
 
     if st.button("Create Capsule"):
-        image_path = ""
-
-        if uploaded_image:
-            os.makedirs("uploads", exist_ok=True)
-            image_path = f"uploads/{datetime.now().timestamp()}_{uploaded_image.name}"
-            with open(image_path, "wb") as f:
-                f.write(uploaded_image.read())
+        image_base64 = image_to_base64(uploaded_image)
 
         capsules.append({
             "sender": st.session_state.user,
@@ -72,7 +82,7 @@ if choice == "Create Capsule":
             "unlock_date": str(unlock_date),
             "password": password,
             "message": message,
-            "image_path": image_path
+            "image_base64": image_base64
         })
 
         save_capsules(capsules)
@@ -106,9 +116,9 @@ elif choice == "View Capsules Received":
             st.success("Unlocked")
             st.write(cap["message"])
 
-            # ✅ SAFE IMAGE DISPLAY
-            if cap.get("image_path") and os.path.exists(cap["image_path"]):
-                st.image(cap["image_path"])
+            img = base64_to_image(cap.get("image_base64", ""))
+            if img:
+                st.image(img, use_container_width=True)
         else:
             st.info("Enter password to unlock")
 
@@ -131,9 +141,9 @@ elif choice == "View Capsules You Created":
         st.write(f"Unlock date: {cap['unlock_date']}")
         st.write(cap["message"])
 
-        # ✅ SAFE IMAGE DISPLAY
-        if cap.get("image_path") and os.path.exists(cap["image_path"]):
-            st.image(cap["image_path"])
+        img = base64_to_image(cap.get("image_base64", ""))
+        if img:
+            st.image(img, use_container_width=True)
 
     if not found:
         st.info("You haven't created any capsules yet")
