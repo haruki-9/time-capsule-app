@@ -76,7 +76,7 @@ if st.session_state.user is None:
             if hash_text(password) == stored_hash:
                 st.session_state.user = username
                 st.success("Login successful")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Incorrect password")
 
@@ -93,7 +93,7 @@ if st.session_state.user is None:
             save_users(users_df)
             st.session_state.user = username
             st.success("Account created successfully")
-            st.experimental_rerun()
+            st.rerun()
 
     st.stop()
 
@@ -211,4 +211,4 @@ elif menu == "View Capsules You Created":
 st.divider()
 if st.button("Logout"):
     st.session_state.user = None
-    st.experimental_rerun()
+    st.rerun()
